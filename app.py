@@ -3,18 +3,19 @@ import yfinance as yf
 import pandas as pd
 import plotly.graph_objects as go
 
-# --- 1. 基本配置 ---
-st.set_page_config(page_title="投資監測儀表板", layout="wide")
-st.title("📈 投資新手全方位監測站")
+# --- 1. 頁面基本設定 ---
+st.set_page_config(page_title="投資新手監測站", layout="wide")
+st.title("📈 投資新手全方位監測儀表板")
 
-# --- 2. 側邊欄 ---
+# --- 2. 側邊欄輸入 ---
 st.sidebar.header("🔍 股票查詢")
 symbol = st.sidebar.text_input("輸入代號 (如: AAPL, 2330.TW)", "AAPL").upper()
 
-# --- 3. 數據抓取函數 ---
+# --- 3. 數據抓取 (使用快取避免重複載入) ---
 @st.cache_data(ttl=3600)
-def load_full_data(tk):
+def get_all_data(tk):
     stock = yf.Ticker(tk)
+    # 分別提取 DataFrame 與 Info 字典
     return {
         "info": stock.info,
         "hist": stock.history(period="1y"),
@@ -24,16 +25,16 @@ def load_full_data(tk):
         "cash": stock.cashflow
     }
 
-# --- 4. 主程式 ---
+# --- 4. 主程式邏輯 ---
 try:
     with st.spinner('數據同步中...'):
-        d = load_full_data(symbol)
+        d = get_all_data(symbol)
         info, hist = d["info"], d["hist"]
 
     if hist.empty:
-        st.error("找不到該代號數據，請重新確認。")
+        st.error("找不到該代號數據，請確認輸入是否正確。")
     else:
-        # --- A. 核心卡片 ---
+        # --- A. 核心數據卡片 ---
         c1, c2, c3, c4 = st.columns(4)
         price = info.get('currentPrice') or hist['Close'].iloc[-1]
         p_close = info.get('previousClose') or hist['Close'].iloc[0]
@@ -45,7 +46,7 @@ try:
         c3.metric("市值 (B)", f"{m_cap:,.1f}B")
         c4.metric("52週高點", f"${info.get('fiftyTwoWeekHigh', 0):,.2f}")
 
-        # --- B. 走勢圖 ---
+        # --- B. 走勢圖表 ---
         st.subheader("📊 價格走勢")
         fig = go.Figure(go.Scatter(x=hist.index, y=hist['Close'], name='收盤價'))
         fig.update_layout(height=300, margin=dict(l=0, r=0, t=10, b=0))
@@ -66,4 +67,32 @@ try:
                 st.info("該標的無近期配息數據。")
 
         with t2:
-            s_
+            s_pct = info.get('shortPercentOfFloat', 0) * 100
+            s_ratio = info.get('shortRatio', "N/A")
+            st.metric("空單佔流通股比", f"{s_pct:.2f}%")
+            st.write(f"空單回補天數 (Days to Cover): {s_ratio}")
+            
+            if s_pct > 15:
+                st.error("⚠️ 警告：空方情緒極高，留意暴跌或軋空風險。")
+            elif s_pct > 7:
+                st.warning("⚡ 提示：空方壓力增加中。")
+            else:
+                st.success("✅ 籌碼面穩定。")
+
+        with t3:
+            choice = st.radio("選擇報表內容", ["損益表", "資產負債表", "現金流量表"], horizontal=True)
+            if choice == "損益表":
+                df = d["income"]
+            elif choice == "資產負債表":
+                df = d["balance"]
+            else:
+                df = d["cash"]
+            
+            if df is not None and not df.empty:
+                st.dataframe(df, use_container_width=True)
+            else:
+                st.warning("暫無財報明細可顯示。")
+
+except Exception as e:
+    st.error(f"連線或解析發生異常: {str(e)}")
+    st.info("💡 提示：若是台股請加 .TW (如 2330.TW)。")
